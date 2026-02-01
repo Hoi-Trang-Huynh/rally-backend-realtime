@@ -160,11 +160,11 @@ func (h *Hub) RouteMessage(client *Client, msg *Message) {
 
 	// Route to specific feature handler based on message type
 	switch msg.Type {
-	case "chat":
+	case MessageTypeChat:
 		h.handleChat(client, msg)
-	case "location":
+	case MessageTypeLocation:
 		h.handleLocation(client, msg)
-	case "planning":
+	case MessageTypePlanning:
 		h.handlePlanning(client, msg)
 	default:
 		log.Printf("Unknown message type: %s", msg.Type)

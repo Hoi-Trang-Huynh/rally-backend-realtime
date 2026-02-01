@@ -32,9 +32,27 @@ type Client struct {
 	Send   chan []byte
 }
 
+// MessageType represents the type of a WebSocket message.
+type MessageType string
+
+const (
+	MessageTypeChat     MessageType = "chat"
+	MessageTypeLocation MessageType = "location"
+	MessageTypePlanning MessageType = "planning"
+)
+
+// IsValid checks if the message type is supported.
+func (t MessageType) IsValid() bool {
+	switch t {
+	case MessageTypeChat, MessageTypeLocation, MessageTypePlanning:
+		return true
+	}
+	return false
+}
+
 // Message represents a WebSocket message structure.
 type Message struct {
-	Type    string          `json:"type"`
+	Type    MessageType     `json:"type"`
 	RoomID  string          `json:"room_id"`
 	Payload json.RawMessage `json:"payload"`
 }
@@ -78,6 +96,12 @@ func (c *Client) ReadPump() {
 		var msg Message
 		if err := json.Unmarshal(message, &msg); err != nil {
 			log.Printf("Invalid message format: %v", err)
+			continue
+		}
+
+		// Validate message type
+		if !msg.Type.IsValid() {
+			log.Printf("Unsupported message type: %s", msg.Type)
 			continue
 		}
 

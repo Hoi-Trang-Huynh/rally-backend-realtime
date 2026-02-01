@@ -3,6 +3,11 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
+# Build arguments for versioning
+ARG VERSION=dev
+ARG COMMIT_SHA=unknown
+ARG BUILD_TIME=unknown
+
 # Install dependencies
 RUN apk add --no-cache git
 
@@ -13,8 +18,12 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/server
+# Build the application with version info
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-X github.com/rally-go/rally-realtime/internal/version.Version=${VERSION} \
+              -X github.com/rally-go/rally-realtime/internal/version.CommitSHA=${COMMIT_SHA} \
+              -X github.com/rally-go/rally-realtime/internal/version.BuildTime=${BUILD_TIME}" \
+    -o server ./cmd/server
 
 # Runtime stage
 FROM alpine:3.19
