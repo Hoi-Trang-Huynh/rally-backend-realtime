@@ -159,5 +159,5 @@ jobs:
             --port=8080 \
             --memory=512Mi \
             --max-instances=5 \
-            --set-env-vars="ENV=production,REDIS_ADDR=${{ secrets.REDIS_ADDR }},ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" \
+            --set-env-vars="ENV=production,REDIS_ADDR=${{ secrets.REDIS_ADDR }},REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }},REDIS_TLS=${{ secrets.REDIS_TLS }},ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" \
             --quiet

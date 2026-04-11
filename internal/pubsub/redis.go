@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 
 	"github.com/redis/go-redis/v9"
@@ -15,12 +16,20 @@ type RedisPubSub struct {
 }
 
 // NewRedisPubSub creates a new Redis pub/sub instance.
-func NewRedisPubSub(addr string) (*RedisPubSub, error) {
-	client := redis.NewClient(&redis.Options{
+// Pass an empty password for unauthenticated connections (local dev).
+// Set tls=true for Upstash and other TLS-only providers.
+func NewRedisPubSub(addr, password string, useTLS bool) (*RedisPubSub, error) {
+	opts := &redis.Options{
 		Addr:     addr,
-		Password: "", // No password by default
-		DB:       0,  // Default DB
-	})
+		Password: password,
+		DB:       0,
+	}
+
+	if useTLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	client := redis.NewClient(opts)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

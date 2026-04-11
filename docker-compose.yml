@@ -1,22 +1,6 @@
 version: '3.8'
 
 services:
-  # Redis Database Engine
-  redis:
-    image: redis:7-alpine
-    container_name: rally-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   # Rally Realtime Server
   server:
     build:
@@ -28,18 +12,12 @@ services:
     env_file:
       - .env
     environment:
-      # Override REDIS_ADDR to use the Docker service name instead of localhost.
-      - REDIS_ADDR=redis:6379
       # Override the credentials path to the container-absolute path.
       - FIREBASE_CREDENTIALS_PATH=/app/serviceAccountKey.json
     volumes:
       # Bind-mount the local service account key into the container.
       # The file is gitignored and must be present only on developer machines.
       - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
-    depends_on:
-      redis:
-        condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  redis_data:
+volumes: {}

@@ -28,7 +28,7 @@ func main() {
 	firebase.MustInitialize(cfg.Firebase.CredentialsPath)
 
 	// Initialise Redis pub/sub
-	redisPubSub, err := pubsub.NewRedisPubSub(cfg.Redis.Addr)
+	redisPubSub, err := pubsub.NewRedisPubSub(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.TLS)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}

@@ -18,7 +18,9 @@ type ServerConfig struct {
 }
 
 type RedisConfig struct {
-	Addr string
+	Addr     string
+	Password string
+	TLS      bool
 }
 
 type FirebaseConfig struct {
@@ -41,7 +43,9 @@ func Load() *Config {
 			AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 		},
 		Redis: RedisConfig{
-			Addr: getEnv("REDIS_ADDR", "localhost:6379"),
+			Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			TLS:      getEnv("REDIS_TLS", "false") == "true",
 		},
 		Firebase: FirebaseConfig{
 			// Leave empty on Cloud Run to use Application Default Credentials.
