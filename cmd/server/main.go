@@ -43,7 +43,6 @@ func main() {
 			}
 		}
 	}
-
 	// Initialise WebSocket hub and server
 	hub := socket.NewHub(redisPubSub)
 	go hub.Run()
