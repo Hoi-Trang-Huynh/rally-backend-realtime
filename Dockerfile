@@ -20,8 +20,10 @@ RUN go mod tidy
 # Copy source code
 COPY . .
 
-# Build the application with version info
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+# Build the application with version info.
+# -mod=mod allows Go to update go.sum during the build, which is necessary
+# when go.sum is being generated inside Docker rather than locally.
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -a -installsuffix cgo \
     -ldflags "-X github.com/rally-go/rally-realtime/internal/version.Version=${VERSION} \
               -X github.com/rally-go/rally-realtime/internal/version.CommitSHA=${COMMIT_SHA} \
               -X github.com/rally-go/rally-realtime/internal/version.BuildTime=${BUILD_TIME}" \

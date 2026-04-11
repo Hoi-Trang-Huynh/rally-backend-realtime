@@ -1,65 +1,163 @@
-name: Build and Push Docker Image
+name: CI Rally Backend Realtime
 
 on:
   push:
     tags:
       - 'v*'  # Triggers on v0.1.0, v1.0.0, etc.
+  workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: rally-backend-realtime
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: rally-backend-realtime
+  SA_EMAIL: github-actions@rally-go-6.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/371906055890/locations/global/workloadIdentityPools/github/providers/github
 
 jobs:
+  # 1️⃣ BUILD
   build:
+    name: Build Go Project
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: version
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build binary
         run: |
-          # Extract tag name (e.g., v1.0.0 -> 1.0.0)
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          echo "Building version: ${VERSION}"
+          VERSION="${GITHUB_SHA::7}"
+          COMMIT_SHA="${GITHUB_SHA::7}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          echo "Building version: ${VERSION}, commit: ${COMMIT_SHA}, time: ${BUILD_TIME}"
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+          go build -mod=mod -v \
+            -ldflags "-X github.com/rally-go/rally-realtime/internal/version.Version=${VERSION} \
+                      -X github.com/rally-go/rally-realtime/internal/version.CommitSHA=${COMMIT_SHA} \
+                      -X github.com/rally-go/rally-realtime/internal/version.BuildTime=${BUILD_TIME}" \
+            -o cmd/server/server ./cmd/server
+
+      - name: Verify binary
+        run: |
+          ls -lh cmd/server/server
+          file cmd/server/server
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          name: go-binary
+          path: cmd/server/server
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest
+  # 2️⃣ PUSH IMAGE
+  push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-            COMMIT_SHA=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: go-binary
+          path: cmd/server
+
+      - name: Authenticate to Google Cloud (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SA_EMAIL }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}/${{ env.IMAGE_NAME }}"
+          COMMIT_TAG="${GITHUB_SHA::7}"
+
+          docker build -t "$IMAGE:latest" -t "$IMAGE:$COMMIT_TAG" .
+
+          echo "IMAGE_FULL=$IMAGE:$COMMIT_TAG" >> $GITHUB_ENV
+
+      - name: Ensure GAR repository exists
+        run: |
+          gcloud artifacts repositories describe ${{ env.IMAGE_NAME }} \
+            --location=${{ env.GCP_REGION }} \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            || gcloud artifacts repositories create ${{ env.IMAGE_NAME }} \
+            --repository-format=docker \
+            --location=${{ env.GCP_REGION }} \
+            --description="Docker repository for ${{ env.IMAGE_NAME }} images"
+
+      - name: Push Docker image
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}/${{ env.IMAGE_NAME }}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${GITHUB_SHA::7}"
+
+      - name: Upload image info
+        run: echo "$IMAGE_FULL" > image.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-info
+          path: image.txt
+
+  # 3️⃣ DEPLOY
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    needs: push
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download image info
+        uses: actions/download-artifact@v4
+        with:
+          name: image-info
+
+      - name: Authenticate to Google Cloud (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SA_EMAIL }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE_FULL=$(cat image.txt)
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --service-account=${{ env.SA_EMAIL }} \
+            --image="$IMAGE_FULL" \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --memory=512Mi \
+            --max-instances=5 \
+            --set-env-vars="ENV=production,REDIS_ADDR=${{ secrets.REDIS_ADDR }},ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" \
+            --quiet

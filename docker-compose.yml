@@ -25,12 +25,13 @@ services:
     container_name: rally-realtime
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
-      - PORT=8080
+      # Override REDIS_ADDR to use the Docker service name instead of localhost.
       - REDIS_ADDR=redis:6379
-      # Mount the service account key for local development.
-      # On Cloud Run this variable is left unset and ADC is used instead.
-      - FIREBASE_CREDENTIALS_PATH=${FIREBASE_CREDENTIALS_PATH:-/app/serviceAccountKey.json}
+      # Override the credentials path to the container-absolute path.
+      - FIREBASE_CREDENTIALS_PATH=/app/serviceAccountKey.json
     volumes:
       # Bind-mount the local service account key into the container.
       # The file is gitignored and must be present only on developer machines.
