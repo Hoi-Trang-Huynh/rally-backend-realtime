@@ -7,32 +7,48 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/rally-go/rally-realtime/internal/config"
+	"github.com/rally-go/rally-realtime/internal/firebase"
 	"github.com/rally-go/rally-realtime/internal/pubsub"
 	"github.com/rally-go/rally-realtime/internal/socket"
 	"github.com/rally-go/rally-realtime/internal/version"
 )
 
 func main() {
-	// Get configuration from environment
-	port := getEnv("PORT", "8080")
-	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	cfg := config.Load()
 
 	log.Printf("Starting Rally Realtime Server %s", version.Version)
 	log.Printf("Commit SHA: %s, Build Time: %s", version.CommitSHA, version.BuildTime)
 
-	// Initialize Redis pub/sub
-	redisPubSub, err := pubsub.NewRedisPubSub(redisAddr)
+	// Initialise Firebase Auth
+	firebase.MustInitialize(cfg.Firebase.CredentialsPath)
+
+	// Initialise Redis pub/sub
+	redisPubSub, err := pubsub.NewRedisPubSub(cfg.Redis.Addr)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer redisPubSub.Close()
 
-	// Initialize WebSocket hub
+	// Parse allowed origins (comma-separated)
+	var allowedOrigins []string
+	if cfg.Server.AllowedOrigins != "" {
+		for _, o := range strings.Split(cfg.Server.AllowedOrigins, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+
+	// Initialise WebSocket hub and server
 	hub := socket.NewHub(redisPubSub)
 	go hub.Run()
+
+	wsServer := socket.NewServer(hub, firebase.GetAuthClient(), allowedOrigins)
 
 	// Setup HTTP routes
 	mux := http.NewServeMux()
@@ -60,13 +76,11 @@ func main() {
 	})
 
 	// WebSocket endpoint
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		socket.ServeWs(hub, w, r)
-	})
+	mux.HandleFunc("/ws", wsServer.ServeWs)
 
 	// Create server
 	server := &http.Server{
-		Addr:         ":" + port,
+		Addr:         ":" + cfg.Server.Port,
 		Handler:      mux,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -75,7 +89,7 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("Server listening on port %s", port)
+		log.Printf("Server listening on port %s", cfg.Server.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}
@@ -96,11 +110,4 @@ func main() {
 	}
 
 	log.Println("Server exited")
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }

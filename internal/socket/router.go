@@ -4,50 +4,73 @@ import (
 	"log"
 	"net/http"
 
+	"firebase.google.com/go/v4/auth"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/rally-go/rally-realtime/internal/middleware"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO: Implement proper origin checking for production
-		return true
-	},
+// Server holds the dependencies for the WebSocket HTTP handler.
+type Server struct {
+	hub          *Hub
+	firebaseAuth *auth.Client
+	upgrader     websocket.Upgrader
 }
 
-// ServeWs handles WebSocket requests from clients.
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	// Extract parameters from query string
-	roomID := r.URL.Query().Get("room_id")
-	userID := r.URL.Query().Get("user_id")
+// NewServer creates a Server. allowedOrigins is the list of permitted Origin
+// header values; if empty, all origins are allowed (suitable for development).
+func NewServer(hub *Hub, firebaseAuth *auth.Client, allowedOrigins []string) *Server {
+	allowedSet := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowedSet[o] = true
+	}
 
+	return &Server{
+		hub:          hub,
+		firebaseAuth: firebaseAuth,
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+			CheckOrigin: func(r *http.Request) bool {
+				if len(allowedOrigins) == 0 {
+					return true // development: allow all origins
+				}
+				return allowedSet[r.Header.Get("Origin")]
+			},
+		},
+	}
+}
+
+// ServeWs handles WebSocket upgrade requests.
+// The client must supply:
+//   - room_id  — the room to join
+//   - token    — a valid Firebase ID token (user_id is derived from the token)
+func (s *Server) ServeWs(w http.ResponseWriter, r *http.Request) {
+	roomID := r.URL.Query().Get("room_id")
 	if roomID == "" {
 		http.Error(w, "room_id is required", http.StatusBadRequest)
 		return
 	}
 
-	if userID == "" {
-		http.Error(w, "user_id is required", http.StatusBadRequest)
+	// Authenticate before upgrading; browsers cannot send auth headers for WS.
+	userID, err := middleware.VerifyWSToken(s.firebaseAuth, r)
+	if err != nil {
+		log.Printf("WebSocket auth failed: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
 
-	// Create new client
 	clientID := uuid.New().String()
-	client := NewClient(clientID, userID, roomID, hub, conn)
+	client := NewClient(clientID, userID, roomID, s.hub, conn)
 
-	// Register client with hub
-	hub.Register <- client
+	s.hub.Register <- client
 
-	// Start client goroutines
 	go client.WritePump()
 	go client.ReadPump()
 

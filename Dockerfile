@@ -11,9 +11,11 @@ ARG BUILD_TIME=unknown
 # Install dependencies
 RUN apk add --no-cache git
 
-# Copy go mod files
-COPY go.mod go.sum ./
-RUN go mod download
+# Copy go mod files and resolve dependencies.
+# go mod tidy generates/updates go.sum, required when go.sum cannot be
+# pre-generated locally (e.g. new dependencies added without a local Go install).
+COPY go.mod go.sum* ./
+RUN go mod tidy
 
 # Copy source code
 COPY . .

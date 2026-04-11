@@ -28,6 +28,9 @@ go.work.sum
 .env
 .env.mcp
 
+# Firebase service account key (local dev only — never commit this)
+serviceAccountKey.json
+
 # Compiled binary
 /server
 
